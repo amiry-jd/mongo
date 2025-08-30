@@ -1,0 +1,59 @@
+name: Auto-Update MongoDB and Build Image
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # every day at 06:00 UTC
+  workflow_dispatch:     # allow manual trigger
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get latest MongoDB version from Docker Hub
+        id: get_version
+        run: |
+          LATEST=$(curl -s https://registry.hub.docker.com/v2/repositories/library/mongo/tags \
+            | jq -r '.results[].name' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -n 1)
+          echo "LATEST=$LATEST" >> $GITHUB_ENV
+
+      - name: Get current version from Dockerfile
+        id: current_version
+        run: |
+          CURRENT=$(grep -m1 '^FROM mongo:' Dockerfile | cut -d':' -f2)
+          echo "CURRENT=$CURRENT" >> $GITHUB_ENV
+
+      - name: Update Dockerfile if needed
+        if: env.LATEST != env.CURRENT
+        run: |
+          sed -i "s|FROM mongo:${CURRENT}|FROM mongo:${LATEST}|" Dockerfile
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump MongoDB to ${LATEST}"
+          git push
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.CR_PAT }}
+
+      - name: Build and push Docker image
+        if: env.LATEST != env.CURRENT
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/custom-mongo:latest
+            ghcr.io/${{ github.repository_owner }}/custom-mongo:${{ env.LATEST }}
