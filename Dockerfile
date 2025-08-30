@@ -1,3 +1,3 @@
-FROM mongo:8.0.12
+FROM mongo:6.0.26
 EXPOSE 27017
 CMD ["mongod"]
